@@ -69,6 +69,13 @@ fun CameraScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted -> hasCameraPermission = granted }
 
+    // Подписка на событие перехода на превью
+    LaunchedEffect(Unit) {
+        viewModel.navigateToPreview.collect {
+            onNavigateToPreview()
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (!hasCameraPermission) {
             permissionLauncher.launch(Manifest.permission.CAMERA)
