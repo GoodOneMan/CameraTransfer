@@ -1,8 +1,6 @@
 package com.tz.cameratransfer.viewmodel
 
 import android.app.Application
-import androidx.camera.core.ImageCapture
-import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -18,63 +16,63 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * ViewModel для управления камерой, настроек и сетевой отправки.
- * Наследует AndroidViewModel для доступа к Application Context (DataStore).
- */
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val settings = SettingsDataStore(application)
     private val socketClient = SocketClient()
 
-    // --- Состояния UI ---
-
-    /** Захваченное и сжатое фото (JPEG ByteArray) */
     private val _capturedImage = MutableStateFlow<ByteArray?>(null)
     val capturedImage: StateFlow<ByteArray?> = _capturedImage
 
-    /** Одноразовые события для Snackbar/Toast */
     private val _events = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val events: SharedFlow<String> = _events
 
-    /** Индикатор отправки */
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending
 
-    // одноразовое событие для навигации назад
+    // Событие для перехода на экран превью ТОЛЬКО когда фото готово
+    private val _navigateToPreview = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val navigateToPreview: SharedFlow<Unit> = _navigateToPreview
+
+    // Событие для возврата назад после успешной отправки
     private val _navigateBack = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val navigateBack: SharedFlow<Unit> = _navigateBack
 
-    /** Настройки сервера (потоки) */
     val serverIp = settings.serverIp
     val serverPort = settings.serverPort
 
-    /**
-     * Обрабатывает захваченный кадр: сжимает и сохраняет.
-     * ImageProxy обязательно закрывается в finally.
-     */
     fun onImageCaptured(imageProxy: ImageProxy) {
         viewModelScope.launch {
             try {
-                //val compressed = ImageCompressor.compress(imageProxy)
-                // ИСПРАВЛЕНИЕ: тяжёлая операция выполняется в IO-потоке
-                val compressed = withContext(Dispatchers.IO) {
-                    ImageCompressor.compress(imageProxy)
-                }
-                _capturedImage.value = compressed
-                _events.tryEmit("Фото готово к отправке")
-            } catch (e: Exception) {
-                _events.tryEmit("Ошибка обработки: ${e.localizedMessage}")
-            } finally {
+                // 1. Мгновенно извлекаем сырые данные (это очень быстро)
+                val buffer = imageProxy.planes[0].buffer
+                val bytes = ByteArray(buffer.remaining())
+                buffer.get(bytes)
+
+                val width = imageProxy.width
+                val height = imageProxy.height
+                val rotation = imageProxy.imageInfo.rotationDegrees
+
+                // 2. НЕМЕДЛЕННО освобождаем ресурсы CameraX!
+                // Камера может продолжать работать, пока идет сжатие.
                 imageProxy.close()
+
+                // 3. Тяжелое сжатие выполняем строго в фоновом IO-потоке
+                val compressed = withContext(Dispatchers.IO) {
+                    ImageCompressor.compressFromBytes(bytes, width, height, rotation)
+                }
+
+                _capturedImage.value = compressed
+                _navigateToPreview.emit(Unit) // Триггерим переход на превью
+
+            } catch (e: Exception) {
+                // Гарантируем закрытие даже при ошибке
+                runCatching { imageProxy.close() }
+                _events.tryEmit("Ошибка обработки: ${e.localizedMessage}")
             }
         }
     }
 
-    /**
-     * Отправляет фото с комментарием на Windows-сервер.
-     * Читает настройки из DataStore, выполняет в IO-потоке.
-     */
     fun sendPhotoWithComment(comment: String) {
         val image = _capturedImage.value
         if (image == null) {
@@ -92,8 +90,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (success) {
                     _events.tryEmit("✅ Отправлено на $ip:$port")
                     _capturedImage.value = null
-                    // ИСПРАВЛЕНИЕ: отправляем сигнал навигации назад
-                    _navigateBack.emit(Unit)
+                    _navigateBack.emit(Unit) // Триггерим возврат на камеру
                 }
             } catch (e: Exception) {
                 _events.tryEmit("❌ Сеть: ${e.localizedMessage}")
@@ -103,7 +100,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Сохраняет IP и порт в DataStore */
     fun saveSettings(ip: String, port: Int) {
         viewModelScope.launch {
             try {
@@ -115,7 +111,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Сбрасывает захваченное фото (пользователь нажал "Назад") */
     fun clearCapturedImage() {
         _capturedImage.value = null
     }
