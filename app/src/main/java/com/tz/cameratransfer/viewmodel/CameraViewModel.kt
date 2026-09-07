@@ -9,12 +9,14 @@ import androidx.lifecycle.viewModelScope
 import com.tz.cameratransfer.data.SettingsDataStore
 import com.tz.cameratransfer.network.SocketClient
 import com.tz.cameratransfer.utils.ImageCompressor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ViewModel для управления камерой, настроек и сетевой отправки.
@@ -39,6 +41,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending
 
+    // одноразовое событие для навигации назад
+    private val _navigateBack = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val navigateBack: SharedFlow<Unit> = _navigateBack
+
     /** Настройки сервера (потоки) */
     val serverIp = settings.serverIp
     val serverPort = settings.serverPort
@@ -50,7 +56,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun onImageCaptured(imageProxy: ImageProxy) {
         viewModelScope.launch {
             try {
-                val compressed = ImageCompressor.compress(imageProxy)
+                //val compressed = ImageCompressor.compress(imageProxy)
+                // ИСПРАВЛЕНИЕ: тяжёлая операция выполняется в IO-потоке
+                val compressed = withContext(Dispatchers.IO) {
+                    ImageCompressor.compress(imageProxy)
+                }
                 _capturedImage.value = compressed
                 _events.tryEmit("Фото готово к отправке")
             } catch (e: Exception) {
@@ -82,6 +92,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (success) {
                     _events.tryEmit("✅ Отправлено на $ip:$port")
                     _capturedImage.value = null
+                    // ИСПРАВЛЕНИЕ: отправляем сигнал навигации назад
+                    _navigateBack.emit(Unit)
                 }
             } catch (e: Exception) {
                 _events.tryEmit("❌ Сеть: ${e.localizedMessage}")

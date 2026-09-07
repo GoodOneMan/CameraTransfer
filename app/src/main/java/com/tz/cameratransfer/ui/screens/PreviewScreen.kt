@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import com.tz.cameratransfer.viewmodel.CameraViewModel
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Экран подтверждения фото.
@@ -45,6 +47,13 @@ fun PreviewScreen(
     val imageBytes by viewModel.capturedImage.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
     var comment by remember { mutableStateOf("") }
+
+    // ИСПРАВЛЕНИЕ: слушаем одноразовое событие и переходим назад
+    LaunchedEffect(Unit) {
+        viewModel.navigateBack.collectLatest {
+            onNavigateBack()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -114,7 +123,7 @@ fun PreviewScreen(
                         contentDescription = null,
                         modifier = Modifier.padding(end = 8.dp)
                     )
-                    Text("Отправить на Windows")
+                    Text("Отправить")
                 }
             }
         }
